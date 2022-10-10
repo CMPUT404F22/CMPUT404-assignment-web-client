@@ -18,6 +18,7 @@
 # Write your own HTTP GET and POST
 # The point is to understand what you have to send and get experience with it
 
+from http import server
 import sys
 import socket
 import re
@@ -32,21 +33,39 @@ class HTTPResponse(object):
         self.code = code
         self.body = body
 
+class URLParser(object):
+    def __init__(self, url):
+        self.parsed_url = urllib.parse.urlparse(url)
+    
+    def get_host(self):
+        return self.parsed_url.hostname
+
+    def get_port(self):
+        if self.parsed_url.port is None:
+            return 80
+        return self.parsed_url.port
+    
+    def get_request_path(self):
+        if len(self.parsed_url.path) > 0:
+            return self.parsed_url.path
+        return "/"
+    
+class ServerResponseParser(object):
+    def __init__(self, server_response: str):
+        self.server_response = server_response
+        self.parse_data(server_response)
+    
+    def parse_data(self, server_response: str):
+        data = server_response.splitlines()
+        self.status_code = int(data[0].split(" ")[1])
+        self.body = data[-1]
+
+
 class HTTPClient(object):
-    #def get_host_port(self,url):
 
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.connect((host, port))
-        return None
-
-    def get_code(self, data):
-        return None
-
-    def get_headers(self,data):
-        return None
-
-    def get_body(self, data):
         return None
     
     def sendall(self, data):
@@ -67,15 +86,59 @@ class HTTPClient(object):
                 done = not part
         return buffer.decode('utf-8')
 
-    def GET(self, url, args=None):
-        code = 500
+    # Reference: 
+    # Source: https://stackoverflow.com/a/30686735
+    # Date Accessed: 2022/10/10
+    def utf8len(self, s: str):
+        return len(s.encode("utf-8"))
+    
+    def http_get_request(self, path, host):
+        request = f'GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n'
+        return request
+    
+    def http_post_request(self, path, host, args=None):
+        request = f'POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/x-www-form-urlencoded\r\n'
         body = ""
-        return HTTPResponse(code, body)
+        if args:
+            for key, value in args.items():
+                body += f'{key}={value}&'
+        body = body.strip("&")
+        
+        request += f'Content-Length: {self.utf8len(body)}\r\n\r\n{body}\r\n'
+        return request
+
+    def GET(self, url, args=None):
+        url_parser = URLParser(url)
+        self.connect(url_parser.get_host(), url_parser.get_port())
+        self.sendall(
+            self.http_get_request(
+                url_parser.get_request_path(),
+                url_parser.get_host()
+            )
+        )
+        data = self.recvall(self.socket)
+        server_response = ServerResponseParser(data)
+        
+        self.close()
+        return HTTPResponse(server_response.status_code, server_response.body)
 
     def POST(self, url, args=None):
         code = 500
         body = ""
-        return HTTPResponse(code, body)
+        url_parser = URLParser(url)
+        self.connect(url_parser.get_host(), url_parser.get_port())
+        self.sendall(
+            self.http_post_request(
+                url_parser.get_request_path(),
+                url_parser.get_host(),
+                args=args
+            )
+        )
+        data = self.recvall(self.socket)
+        server_response = ServerResponseParser(data)
+        
+        self.close()
+        return HTTPResponse(server_response.status_code, server_response.body)
 
     def command(self, url, command="GET", args=None):
         if (command == "POST"):
